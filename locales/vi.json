@@ -1,0 +1,14 @@
+{
+  "page_title": "Agent phân tích dữ liệu tự động",
+  "app_title": "Agent phân tích dữ liệu tự động",
+  "upload_label": "Upload file CSV",
+  "read_error": "Không đọc được file CSV: {error}",
+  "read_success": "Đã đọc file: {rows} dòng, {cols} cột",
+  "goal_subheader": "Nhập mục tiêu phân tích",
+  "goal_placeholder": "Mô tả bằng tiếng Việt bạn muốn phân tích gì từ dữ liệu này",
+  "model_selector_label": "Chọn model đang dùng",
+  "run_button": "Chạy Agent",
+  "spinner_text": "Agent đang xử lý...",
+  "result_subheader": "Kết quả từ Agent",
+  "upload_prompt": "Vui lòng upload file CSV để bắt đầu."
+}
