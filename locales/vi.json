@@ -10,5 +10,6 @@
   "run_button": "Chạy Agent",
   "spinner_text": "Agent đang xử lý...",
   "result_subheader": "Kết quả từ Agent",
-  "upload_prompt": "Vui lòng upload file CSV để bắt đầu."
+  "upload_prompt": "Vui lòng upload file CSV để bắt đầu.",
+  "agent_error": "Model hiện không phản hồi được (có thể do quá tải tạm thời). Vui lòng thử lại hoặc đổi sang model khác ở trên. Chi tiết lỗi: {error}"
 }

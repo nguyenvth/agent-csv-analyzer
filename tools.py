@@ -1,8 +1,13 @@
 import pandas as pd
 import plotly.express as px
-import plotly.io as pio
 from smolagents import tool
 
+# In-memory store for generated figures, keyed by column name.
+# The agent's tool can only return text, so the actual Plotly figure
+# object is kept here and read back by the UI layer after the agent
+# finishes - avoids writing files to disk that end users cannot
+# access when the app is deployed on a server they don't control.
+generated_charts: dict = {}
 
 @tool
 def profile_dataframe(df: pd.DataFrame) -> str:
@@ -90,16 +95,17 @@ def compute_correlation(df: pd.DataFrame) -> str:
 @tool
 def plot_histogram(df: pd.DataFrame, column: str) -> str:
     """
-    Create a histogram for a numeric column and save it as an HTML
-    file. Use this to show the distribution of values in one column.
+    Create a histogram for a numeric column and keep it in memory
+    for the UI to display. Use this to show the distribution of
+    values in one column.
 
     Args:
         df: The dataframe containing the column.
         column: Name of the numeric column to plot.
 
     Returns:
-        A message confirming the chart was saved, with its file path,
-        or an error message if the column is invalid.
+        A message confirming the chart was created, or an error
+        message if the column is invalid.
     """
     if column not in df.columns:
         return f"Error: column '{column}' does not exist in the data."
@@ -108,11 +114,9 @@ def plot_histogram(df: pd.DataFrame, column: str) -> str:
         return f"Error: column '{column}' is not numeric, cannot plot histogram."
 
     fig = px.histogram(df, x=column, title=f"Histogram of {column}")
+    fig.update_layout(template="plotly_white")
+    fig.update_traces(marker_color="#4C78A8")
 
-    # Charts are saved to disk (not returned as objects) because the
-    # agent's LLM can only exchange text with tools, not binary/plot
-    # objects.
-    output_path = f"chart_{column}.html"
-    pio.write_html(fig, output_path)
+    generated_charts[column] = fig
 
-    return f"Histogram saved to {output_path}"
+    return f"Histogram for column '{column}' created successfully."

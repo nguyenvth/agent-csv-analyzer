@@ -9,6 +9,7 @@ from tools import (
     describe_numeric_columns,
     compute_correlation,
     plot_histogram,
+    generated_charts,
 )
 from i18n import load_translations
 from models_config import AVAILABLE_MODELS, get_model_config
@@ -40,11 +41,8 @@ if uploaded_file is not None:
     goal = st.text_area(t["goal_placeholder"])
 
     if st.button(t["run_button"]) and goal:
-        for old_file in glob.glob("chart_*.html"):
-            os.remove(old_file)
+        generated_charts.clear()
         with st.spinner(t["spinner_text"]):
-            # Model choice is isolated here; swapping providers later
-            # (e.g. Groq) only requires changing this one call.
             model_config = get_model_config(selected_model_key)
             model = LiteLLMModel(
                 model_id=model_config["model_id"],
@@ -70,19 +68,19 @@ if uploaded_file is not None:
                 f"ONLY the tool output in Vietnamese. Do not describe "
                 f"or interpret values you have not seen through a "
                 f"tool. If you use compute_correlation, explicitly "
-                f"state that correlation does not imply causation. If "
-                f"you use plot_histogram, mention the saved file path "
-                f"in your summary."
+                f"state that correlation does not imply causation."
             )
 
-            result = agent.run(prompt, additional_args={"df": df})
+            try:
+                result = agent.run(prompt, additional_args={"df": df})
+            except Exception as e:
+                st.error(t["agent_error"].format(error=e))
+                st.stop()
 
         st.subheader(t["result_subheader"])
         st.write(result)
-    
-        chart_files = glob.glob("chart_*.html")
-        for chart_file in chart_files:
-            with open(chart_file, "r", encoding="utf-8") as f:
-                st.components.v1.html(f.read(), height=500)
+
+        for column, fig in generated_charts.items():
+            st.plotly_chart(fig, use_container_width=True)
 else:
     st.info(t["upload_prompt"])
