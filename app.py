@@ -61,6 +61,19 @@ if uploaded_file is not None:
                 api_key=model_config["api_key"],
                 num_retries=1,
                 timeout=20,
+                # CodeAgent never declares tools to the provider (it has
+                # the model write Python code instead), so tool-calling
+                # should always be off. Stating that explicitly - instead
+                # of just omitting it - is a cheap extra guard against
+                # providers (e.g. Groq) whose models can self-trigger
+                # native tool-calling from seeing tool signatures in the
+                # prompt text alone.
+                tool_choice="none",
+                **(
+                    {"custom_llm_provider": model_config["custom_llm_provider"]}
+                    if "custom_llm_provider" in model_config
+                    else {}
+                ),
             )
             agent = CodeAgent(
                 tools=[
