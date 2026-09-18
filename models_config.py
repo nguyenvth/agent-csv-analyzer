@@ -8,8 +8,8 @@ AVAILABLE_MODELS = {
         "model_id": "gemini/gemini-2.5-flash",
         "api_key_env": "GEMINI_API_KEY",
     },
-    "groq-llama-3.3-70b": {
-        "model_id": "groq/llama-3.3-70b-versatile",
+    "groq-llama-3.1-8b": {
+        "model_id": "groq/llama-3.1-8b-instant",
         "api_key_env": "GROQ_API_KEY",
     },
 }

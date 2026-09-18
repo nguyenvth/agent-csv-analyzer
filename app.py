@@ -1,4 +1,5 @@
 import os
+import concurrent.futures
 import streamlit as st
 import pandas as pd
 import glob
@@ -15,7 +16,18 @@ from i18n import load_translations
 from models_config import AVAILABLE_MODELS, get_model_config
 
 load_dotenv()
+import litellm
+litellm._turn_on_debug()
 t = load_translations("vi")
+
+# Bounds a single "Chay Agent" click to at most a few tool-call steps and
+# a hard wall-clock deadline. Without these, a weak/free-tier model that
+# keeps producing malformed code blocks can drive CodeAgent through its
+# (default 20) steps, each paying its own LLM-call timeout + retry, adding
+# up to many minutes with no error surfaced - per-call timeout alone does
+# not bound the total run.
+AGENT_MAX_STEPS = 6
+AGENT_TOTAL_TIMEOUT_SECONDS = 90
 
 st.set_page_config(page_title=t["page_title"], layout="wide")
 st.title(t["app_title"])
@@ -47,6 +59,8 @@ if uploaded_file is not None:
             model = LiteLLMModel(
                 model_id=model_config["model_id"],
                 api_key=model_config["api_key"],
+                num_retries=1,
+                timeout=20,
             )
             agent = CodeAgent(
                 tools=[
@@ -56,6 +70,7 @@ if uploaded_file is not None:
                     plot_histogram,
                 ],
                 model=model,
+                max_steps=AGENT_MAX_STEPS,
             )
 
             prompt = (
@@ -71,9 +86,22 @@ if uploaded_file is not None:
                 f"state that correlation does not imply causation."
             )
 
+            # Not using ThreadPoolExecutor as a context manager on purpose:
+            # its __exit__ calls shutdown(wait=True), which would block on
+            # the stuck thread anyway and defeat this timeout entirely.
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(agent.run, prompt, additional_args={"df": df})
             try:
-                result = agent.run(prompt, additional_args={"df": df})
+                result = future.result(timeout=AGENT_TOTAL_TIMEOUT_SECONDS)
+                executor.shutdown(wait=False)
+            except concurrent.futures.TimeoutError:
+                executor.shutdown(wait=False)
+                st.error(t["agent_timeout_error"].format(
+                    seconds=AGENT_TOTAL_TIMEOUT_SECONDS
+                ))
+                st.stop()
             except Exception as e:
+                executor.shutdown(wait=False)
                 st.error(t["agent_error"].format(error=e))
                 st.stop()
 
