@@ -12,5 +12,7 @@
   "result_subheader": "Kết quả từ Agent",
   "upload_prompt": "Vui lòng upload file CSV để bắt đầu.",
   "agent_error": "Model hiện không phản hồi được (có thể do quá tải tạm thời). Vui lòng thử lại hoặc đổi sang model khác ở trên. Chi tiết lỗi: {error}",
-  "agent_timeout_error": "Agent xử lý quá {seconds} giây mà chưa ra kết quả nên đã bị dừng. Vui lòng thử lại với mục tiêu phân tích đơn giản hơn hoặc đổi sang model khác ở trên."
+  "agent_slow_warning": "Agent đã chạy hơn {seconds} giây mà chưa ra kết quả. Bạn có thể tiếp tục chờ, hoặc dừng lại và thử với mục tiêu phân tích đơn giản hơn / đổi sang model khác ở trên - tùy bạn.",
+  "keep_waiting_button": "Tiếp tục chờ",
+  "stop_waiting_button": "Dừng lại"
 }

@@ -1,4 +1,5 @@
 import os
+import time
 import concurrent.futures
 import streamlit as st
 import pandas as pd
@@ -20,14 +21,19 @@ import litellm
 litellm._turn_on_debug()
 t = load_translations("vi")
 
-# Bounds a single "Chay Agent" click to at most a few tool-call steps and
-# a hard wall-clock deadline. Without these, a weak/free-tier model that
-# keeps producing malformed code blocks can drive CodeAgent through its
-# (default 20) steps, each paying its own LLM-call timeout + retry, adding
-# up to many minutes with no error surfaced - per-call timeout alone does
-# not bound the total run.
+# Bounds a single "Chay Agent" click to at most a few tool-call steps.
+# Without this, a weak/free-tier model that keeps producing malformed code
+# blocks can drive CodeAgent through its (default 20) steps, each paying
+# its own LLM-call timeout + retry.
 AGENT_MAX_STEPS = 6
-AGENT_TOTAL_TIMEOUT_SECONDS = 90
+
+# Not a hard cutoff: every AGENT_CHECKPOINT_SECONDS while the agent is
+# still running, the user is shown how long it's been and offered a
+# choice - keep waiting, or stop and try a simpler goal / a different
+# model. The run itself is never force-killed (Python can't do that to a
+# thread anyway); this just stops the UI from silently sitting there with
+# no explanation for minutes.
+AGENT_CHECKPOINT_SECONDS = 90
 
 st.set_page_config(page_title=t["page_title"], layout="wide")
 st.title(t["app_title"])
@@ -52,71 +58,103 @@ if uploaded_file is not None:
     st.subheader(t["goal_subheader"])
     goal = st.text_area(t["goal_placeholder"])
 
-    if st.button(t["run_button"]) and goal:
+    run_pending = st.session_state.get("agent_future") is not None
+
+    if not run_pending and st.button(t["run_button"]) and goal:
         generated_charts.clear()
+        model_config = get_model_config(selected_model_key)
+        extra_kwargs = {
+            k: v for k, v in model_config.items() if k not in ("model_id", "api_key")
+        }
+        model = LiteLLMModel(
+            model_id=model_config["model_id"],
+            api_key=model_config["api_key"],
+            num_retries=1,
+            timeout=20,
+            # CodeAgent never declares tools to the provider (it has
+            # the model write Python code instead), so tool-calling
+            # should always be off. Stating that explicitly - instead
+            # of just omitting it - is a cheap extra guard against
+            # providers (e.g. Groq) whose models can self-trigger
+            # native tool-calling from seeing tool signatures in the
+            # prompt text alone.
+            tool_choice="none",
+            **extra_kwargs,
+        )
+        agent = CodeAgent(
+            tools=[
+                profile_dataframe,
+                describe_numeric_columns,
+                compute_correlation,
+                plot_histogram,
+            ],
+            model=model,
+            max_steps=AGENT_MAX_STEPS,
+        )
+
+        prompt = (
+            f"User's analysis goal: {goal}\n\n"
+            f"A pandas DataFrame named 'df' is available in your "
+            f"execution environment. You have 4 tools: "
+            f"profile_dataframe, describe_numeric_columns, "
+            f"compute_correlation, and plot_histogram. Call the "
+            f"ones relevant to the user's goal. Every number you state "
+            f"must come from what a tool actually returned - never "
+            f"invent or guess a value you have not seen through a tool "
+            f"call. Within that constraint, write a clear, natural-"
+            f"language answer in Vietnamese: you may reasonably "
+            f"interpret what the tool output suggests about the data "
+            f"(e.g. what kind of dataset the column names imply), not "
+            f"just restate the raw tool output verbatim. If you use "
+            f"compute_correlation, explicitly state that correlation "
+            f"does not imply causation."
+        )
+
+        # Not using ThreadPoolExecutor as a context manager on purpose:
+        # its __exit__ calls shutdown(wait=True), which would block on a
+        # stuck thread. Kept in session_state so it survives across
+        # reruns while the user is offered "keep waiting or stop".
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(agent.run, prompt, additional_args={"df": df})
+        st.session_state.agent_executor = executor
+        st.session_state.agent_future = future
+        st.session_state.agent_start_time = time.time()
+        st.session_state.agent_checkpoint = time.time() + AGENT_CHECKPOINT_SECONDS
+        run_pending = True
+
+    if run_pending:
+        future = st.session_state.agent_future
+        wait_seconds = max(st.session_state.agent_checkpoint - time.time(), 0)
         with st.spinner(t["spinner_text"]):
-            model_config = get_model_config(selected_model_key)
-            model = LiteLLMModel(
-                model_id=model_config["model_id"],
-                api_key=model_config["api_key"],
-                num_retries=1,
-                timeout=20,
-                # CodeAgent never declares tools to the provider (it has
-                # the model write Python code instead), so tool-calling
-                # should always be off. Stating that explicitly - instead
-                # of just omitting it - is a cheap extra guard against
-                # providers (e.g. Groq) whose models can self-trigger
-                # native tool-calling from seeing tool signatures in the
-                # prompt text alone.
-                tool_choice="none",
-                **(
-                    {"custom_llm_provider": model_config["custom_llm_provider"]}
-                    if "custom_llm_provider" in model_config
-                    else {}
-                ),
-            )
-            agent = CodeAgent(
-                tools=[
-                    profile_dataframe,
-                    describe_numeric_columns,
-                    compute_correlation,
-                    plot_histogram,
-                ],
-                model=model,
-                max_steps=AGENT_MAX_STEPS,
-            )
-
-            prompt = (
-                f"User's analysis goal: {goal}\n\n"
-                f"A pandas DataFrame named 'df' is available in your "
-                f"execution environment. You have 4 tools: "
-                f"profile_dataframe, describe_numeric_columns, "
-                f"compute_correlation, and plot_histogram. Call the "
-                f"ones relevant to the user's goal, then summarize "
-                f"ONLY the tool output in Vietnamese. Do not describe "
-                f"or interpret values you have not seen through a "
-                f"tool. If you use compute_correlation, explicitly "
-                f"state that correlation does not imply causation."
-            )
-
-            # Not using ThreadPoolExecutor as a context manager on purpose:
-            # its __exit__ calls shutdown(wait=True), which would block on
-            # the stuck thread anyway and defeat this timeout entirely.
-            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            future = executor.submit(agent.run, prompt, additional_args={"df": df})
             try:
-                result = future.result(timeout=AGENT_TOTAL_TIMEOUT_SECONDS)
-                executor.shutdown(wait=False)
+                result = future.result(timeout=wait_seconds)
             except concurrent.futures.TimeoutError:
-                executor.shutdown(wait=False)
-                st.error(t["agent_timeout_error"].format(
-                    seconds=AGENT_TOTAL_TIMEOUT_SECONDS
-                ))
-                st.stop()
+                result = None
             except Exception as e:
-                executor.shutdown(wait=False)
+                st.session_state.agent_executor.shutdown(wait=False)
+                st.session_state.agent_future = None
                 st.error(t["agent_error"].format(error=e))
                 st.stop()
+
+        if result is None:
+            # Not done yet at this checkpoint - never force-killed, just
+            # let the user decide whether to keep waiting.
+            elapsed = int(time.time() - st.session_state.agent_start_time)
+            st.warning(t["agent_slow_warning"].format(seconds=elapsed))
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(t["keep_waiting_button"]):
+                    st.session_state.agent_checkpoint = time.time() + AGENT_CHECKPOINT_SECONDS
+                    st.rerun()
+            with col2:
+                if st.button(t["stop_waiting_button"]):
+                    st.session_state.agent_executor.shutdown(wait=False)
+                    st.session_state.agent_future = None
+                    st.rerun()
+            st.stop()
+
+        st.session_state.agent_executor.shutdown(wait=False)
+        st.session_state.agent_future = None
 
         st.subheader(t["result_subheader"])
         st.write(result)
