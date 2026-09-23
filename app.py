@@ -15,6 +15,7 @@ from tools import (
 )
 from i18n import load_translations
 from models_config import AVAILABLE_MODELS, get_model_config
+from run_logger import log_run
 
 load_dotenv()
 import litellm
@@ -35,6 +36,16 @@ AGENT_MAX_STEPS = 6
 # no explanation for minutes.
 AGENT_CHECKPOINT_SECONDS = 90
 
+def _steps_so_far() -> int:
+    # Counts real agent steps (Step 1, Step 2, ...), excluding the
+    # initial task/system-prompt entry - matches what "Step N" means in
+    # the console output, for the run log.
+    agent = st.session_state.get("agent_obj")
+    if agent is None:
+        return 0
+    return sum(1 for step in agent.memory.steps if type(step).__name__ == "ActionStep")
+
+
 st.set_page_config(page_title=t["page_title"], layout="wide")
 st.title(t["app_title"])
 
@@ -53,7 +64,7 @@ if uploaded_file is not None:
         st.stop()
 
     st.success(t["read_success"].format(rows=df.shape[0], cols=df.shape[1]))
-    st.dataframe(df.head(20))
+    st.dataframe(df)
 
     st.subheader(t["goal_subheader"])
     goal = st.text_area(t["goal_placeholder"])
@@ -94,20 +105,20 @@ if uploaded_file is not None:
 
         prompt = (
             f"User's analysis goal: {goal}\n\n"
-            f"A pandas DataFrame named 'df' is available in your "
-            f"execution environment. You have 4 tools: "
-            f"profile_dataframe, describe_numeric_columns, "
-            f"compute_correlation, and plot_histogram. Call the "
-            f"ones relevant to the user's goal. Every number you state "
-            f"must come from what a tool actually returned - never "
-            f"invent or guess a value you have not seen through a tool "
-            f"call. Within that constraint, write a clear, natural-"
-            f"language answer in Vietnamese: you may reasonably "
-            f"interpret what the tool output suggests about the data "
-            f"(e.g. what kind of dataset the column names imply), not "
-            f"just restate the raw tool output verbatim. If you use "
-            f"compute_correlation, explicitly state that correlation "
-            f"does not imply causation."
+            f"A pandas DataFrame named 'df' is available in your execution "
+            f"environment. You have 4 tools: profile_dataframe, "
+            f"describe_numeric_columns, compute_correlation, and "
+            f"plot_histogram. Call the ones relevant to the user's goal, "
+            f"then summarize ONLY the tool output in Vietnamese. Do not "
+            f"describe or interpret values you have not seen through a "
+            f"tool. If you use compute_correlation, explicitly state that "
+            f"correlation does not imply causation. If a column that looks "
+            f"numeric is typed as string, explain clearly that it contains "
+            f"invalid values preventing numeric conversion, and state that "
+            f"it was excluded from quantitative analysis until cleaned. "
+            f"If the dataset has fewer than 10 rows, explicitly warn that "
+            f"correlation/statistics are only illustrative, not "
+            f"statistically robust."
         )
 
         # Not using ThreadPoolExecutor as a context manager on purpose:
@@ -118,6 +129,9 @@ if uploaded_file is not None:
         future = executor.submit(agent.run, prompt, additional_args={"df": df})
         st.session_state.agent_executor = executor
         st.session_state.agent_future = future
+        st.session_state.agent_obj = agent
+        st.session_state.agent_goal = goal
+        st.session_state.agent_model_key = selected_model_key
         st.session_state.agent_start_time = time.time()
         st.session_state.agent_checkpoint = time.time() + AGENT_CHECKPOINT_SECONDS
         run_pending = True
@@ -133,6 +147,14 @@ if uploaded_file is not None:
             except Exception as e:
                 st.session_state.agent_executor.shutdown(wait=False)
                 st.session_state.agent_future = None
+                log_run(
+                    goal=st.session_state.agent_goal,
+                    model_key=st.session_state.agent_model_key,
+                    elapsed_seconds=time.time() - st.session_state.agent_start_time,
+                    num_steps=_steps_so_far(),
+                    result=None,
+                    error=str(e),
+                )
                 st.error(t["agent_error"].format(error=e))
                 st.stop()
 
@@ -149,12 +171,27 @@ if uploaded_file is not None:
             with col2:
                 if st.button(t["stop_waiting_button"]):
                     st.session_state.agent_executor.shutdown(wait=False)
+                    log_run(
+                        goal=st.session_state.agent_goal,
+                        model_key=st.session_state.agent_model_key,
+                        elapsed_seconds=time.time() - st.session_state.agent_start_time,
+                        num_steps=_steps_so_far(),
+                        result=None,
+                        error="stopped_by_user",
+                    )
                     st.session_state.agent_future = None
                     st.rerun()
             st.stop()
 
         st.session_state.agent_executor.shutdown(wait=False)
         st.session_state.agent_future = None
+        log_run(
+            goal=st.session_state.agent_goal,
+            model_key=st.session_state.agent_model_key,
+            elapsed_seconds=time.time() - st.session_state.agent_start_time,
+            num_steps=_steps_so_far(),
+            result=result,
+        )
 
         st.subheader(t["result_subheader"])
         st.write(result)
