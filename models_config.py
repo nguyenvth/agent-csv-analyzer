@@ -5,20 +5,28 @@ import os
 # requires adding one entry here - no changes needed elsewhere.
 AVAILABLE_MODELS = {
     # gemini-2.5-flash is intentionally NOT used here: Google has retired
-    # it for new API keys - it now returns a 404 "no longer available to
-    # new users, use gemini-3.6-flash" (confirmed live). Existing/older
-    # keys may still reach it, but new ones can't, so gemini-3.6-flash is
-    # the only choice that works for everyone.
-    "gemini-3.6-flash": {
-        "model_id": "gemini/gemini-3.6-flash",
+    # it for new API keys (404 "no longer available to new users").
+    #
+    # gemini-3.6-flash / gemini-flash-latest (which currently resolves to
+    # gemini-3.8-flash) are ALSO intentionally not used: confirmed live
+    # that their free tier is capped at 5 requests/minute per model, and
+    # CodeAgent alone can make up to 6 calls for a single question (one
+    # per step) - that's enough on its own to blow the quota and get
+    # "high demand" 503s / 429 RESOURCE_EXHAUSTED, no wrong config needed.
+    #
+    # gemini-flash-lite-latest has a much higher free-tier RPM budget -
+    # tested live with 6 rapid back-to-back calls: 5 succeeded, the 1
+    # failure was a clean, catchable client-side timeout (not a silent
+    # hang). This is the reliable choice for CodeAgent's multi-call-
+    # per-question pattern on the free tier.
+    "gemini-flash-lite-latest": {
+        "model_id": "gemini/gemini-flash-lite-latest",
         "api_key_env": "GEMINI_API_KEY",
-        # Gemini's "flash" models run an internal "thinking" pass on by
-        # default with a dynamic (effectively unbounded) token budget,
-        # even for simple prompts - this is what actually eats the
-        # minutes, not network latency, and litellm's per-call timeout
-        # does not reliably cut it short. reasoning_effort="none" disables
-        # or minimizes it depending on the model generation.
-        "extra_kwargs": {"reasoning_effort": "none"},
+        # No reasoning_effort override here: passing reasoning_effort=
+        # "none" to this model returns a hard 400 INVALID_ARGUMENT
+        # (confirmed live) - litellm's thinkingConfig mapping doesn't fit
+        # this alias. Its default behavior already tested fast and
+        # reliable, so it's left alone.
     },
     # gpt-oss (both 20b and 120b) is intentionally NOT used here: on Groq
     # it repeatedly self-triggers native tool-calling (baked into its
